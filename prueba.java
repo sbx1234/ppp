@@ -8,10 +8,7 @@ import javax.swing.DefaultListModel;
 import javax.swing.JOptionPane;
 import javax.swing.table.DefaultTableModel;
 
-/**
- *
- * @author Tati
- */
+
 public class prueba extends javax.swing.JFrame {
 
     /**
