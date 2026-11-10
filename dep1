@@ -1,0 +1,283 @@
+//BD
+CREATE DATABASE bddepartamentos;
+USE bddepartamentos;
+
+-- Tabla departamentos (el "1")
+CREATE TABLE departamentos (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100) NOT NULL UNIQUE
+);
+
+-- Tabla empleados (los "muchos")
+CREATE TABLE empleados (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100) NOT NULL,
+  cargo VARCHAR(100) NOT NULL,
+  id_departamento INT NOT NULL,
+  FOREIGN KEY (id_departamento) REFERENCES departamentos(id)
+);
+
+
+
+//conexion.php
+<?php
+class Conexion {
+    private $servername = "localhost";
+    private $username   = "root";
+    private $password   = "";
+    private $database   = "bddepartamentos";
+    public  $conn;
+
+    public function __construct() {
+        $this->conn = new mysqli(
+            $this->servername,
+            $this->username,
+            $this->password,
+            $this->database
+        );
+
+        if ($this->conn->connect_error) {
+            die(json_encode(["error" => "No se conectó a la base: " . $this->conn->connect_error]));
+        }
+    }
+}
+?>
+
+
+//departamento.php
+<?php
+require_once "conexion.php";
+
+class Departamento {
+
+    private $conn;
+
+    public function __construct() {
+        $db = new Conexion();
+        $this->conn = $db->conn;
+    }
+
+    // -------------------------------------------------
+    // Registrar un departamento
+    // -------------------------------------------------
+    public function guardarDepartamento($nombre) {
+
+        if (trim($nombre) == "") {
+            return ["error" => "El nombre del departamento está vacío"];
+        }
+
+        $stmt = $this->conn->prepare("INSERT INTO departamentos (nombre) VALUES (?)");
+        $stmt->bind_param("s", $nombre);
+
+        if ($stmt->execute()) {
+            return ["success" => "Departamento registrado"];
+        } else {
+            return ["error" => "No se guardó: " . $this->conn->error];
+        }
+    }
+
+    // -------------------------------------------------
+    // Listar todos los departamentos (para los <select>)
+    // -------------------------------------------------
+    public function listarDepartamentos() {
+        $res = $this->conn->query("SELECT * FROM departamentos ORDER BY nombre");
+        $resultado = [];
+        while ($fila = $res->fetch_assoc()) {
+            $resultado[] = $fila;
+        }
+        return $resultado;
+    }
+
+    // -------------------------------------------------
+    // Ingresar un empleado asociado a un departamento
+    // -------------------------------------------------
+    public function guardarEmpleado($nombre, $cargo, $idDepartamento) {
+
+        if (trim($nombre) == "" || trim($cargo) == "") {
+            return ["error" => "Nombre y cargo son obligatorios"];
+        }
+
+        // Verificar que el departamento exista
+        $stmt = $this->conn->prepare("SELECT id FROM departamentos WHERE id = ?");
+        $stmt->bind_param("i", $idDepartamento);
+        $stmt->execute();
+        $res = $stmt->get_result();
+
+        if ($res->num_rows == 0) {
+            return ["error" => "El departamento no existe"];
+        }
+
+        $stmt = $this->conn->prepare(
+            "INSERT INTO empleados (nombre, cargo, id_departamento) VALUES (?, ?, ?)"
+        );
+        $stmt->bind_param("ssi", $nombre, $cargo, $idDepartamento);
+
+        if ($stmt->execute()) {
+            return ["success" => "Empleado registrado"];
+        } else {
+            return ["error" => "No se guardó: " . $this->conn->error];
+        }
+    }
+
+    // -------------------------------------------------
+    // Buscar TODOS los empleados de un departamento
+    // -------------------------------------------------
+    public function buscarEmpleadosPorDepartamento($idDepartamento) {
+
+        $stmt = $this->conn->prepare(
+            "SELECT e.id, e.nombre, e.cargo, d.nombre AS departamento
+             FROM empleados e
+             INNER JOIN departamentos d ON e.id_departamento = d.id
+             WHERE d.id = ?"
+        );
+        $stmt->bind_param("i", $idDepartamento);
+        $stmt->execute();
+        $res = $stmt->get_result();
+
+        $resultado = [];
+        while ($fila = $res->fetch_assoc()) {
+            $resultado[] = $fila;
+        }
+
+        return $resultado;
+    }
+}
+?>
+
+
+
+//index.php
+<?php
+require_once "Departamento.php";
+
+$mensajeDepto   = "";
+$mensajeEmp     = "";
+$empleados      = [];
+$deptoBuscado   = "";
+$departamentos  = [];
+
+$d = new Departamento();
+$departamentos = $d->listarDepartamentos();
+
+// ---------- REGISTRAR DEPARTAMENTO ----------
+if (isset($_POST["accion"]) && $_POST["accion"] == "guardarDepto") {
+    $res = $d->guardarDepartamento($_POST["nombre_depto"]);
+    $mensajeDepto = isset($res["success"]) ? "✔ " . $res["success"] : "✘ " . $res["error"];
+    $departamentos = $d->listarDepartamentos(); // recargar
+}
+
+// ---------- REGISTRAR EMPLEADO ----------
+if (isset($_POST["accion"]) && $_POST["accion"] == "guardarEmpleado") {
+    $res = $d->guardarEmpleado($_POST["nombre_emp"], $_POST["cargo"], $_POST["id_departamento"]);
+    $mensajeEmp = isset($res["success"]) ? "✔ " . $res["success"] : "✘ " . $res["error"];
+}
+
+// ---------- BUSCAR EMPLEADOS POR DEPARTAMENTO ----------
+if (isset($_GET["id_departamento"]) && $_GET["id_departamento"] != "") {
+    $deptoBuscado = $_GET["id_departamento"];
+    $empleados = $d->buscarEmpleadosPorDepartamento($deptoBuscado);
+}
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Departamentos y Empleados</title>
+</head>
+<body>
+
+    <!-- ================= 1. REGISTRAR DEPARTAMENTO ================= -->
+    <h2>1. Registrar Departamento</h2>
+
+    <form method="POST">
+        <input type="hidden" name="accion" value="guardarDepto">
+        <input type="text" name="nombre_depto" placeholder="Nombre del departamento" required>
+        <button type="submit">Guardar Departamento</button>
+    </form>
+
+    <?php if ($mensajeDepto != "") echo "<p><b>$mensajeDepto</b></p>"; ?>
+
+    <!-- Tabla de departamentos registrados -->
+    <h3>Departamentos registrados</h3>
+    <table border="1" cellpadding="8">
+        <tr>
+            <th>ID</th>
+            <th>Nombre</th>
+        </tr>
+        <?php foreach ($departamentos as $dep): ?>
+            <tr>
+                <td><?= $dep["id"] ?></td>
+                <td><?= $dep["nombre"] ?></td>
+            </tr>
+        <?php endforeach; ?>
+    </table>
+
+    <hr>
+
+    <!-- ================= 2. REGISTRAR EMPLEADO ================= -->
+    <h2>2. Registrar Empleado</h2>
+
+    <form method="POST">
+        <input type="hidden" name="accion" value="guardarEmpleado">
+        <input type="text" name="nombre_emp" placeholder="Nombre del empleado" required><br><br>
+        <input type="text" name="cargo"      placeholder="Cargo" required><br><br>
+
+        <select name="id_departamento" required>
+            <option value="">-- Seleccione departamento --</option>
+            <?php foreach ($departamentos as $dep): ?>
+                <option value="<?= $dep["id"] ?>"><?= $dep["nombre"] ?></option>
+            <?php endforeach; ?>
+        </select><br><br>
+
+        <button type="submit">Guardar Empleado</button>
+    </form>
+
+    <?php if ($mensajeEmp != "") echo "<p><b>$mensajeEmp</b></p>"; ?>
+
+    <hr>
+
+    <!-- ================= 3. BUSCAR EMPLEADOS POR DEPARTAMENTO ================= -->
+    <h2>3. Buscar Empleados por Departamento</h2>
+
+    <form method="GET">
+        <select name="id_departamento" required>
+            <option value="">-- Seleccione departamento --</option>
+            <?php foreach ($departamentos as $dep): ?>
+                <option value="<?= $dep["id"] ?>"
+                    <?= $deptoBuscado == $dep["id"] ? "selected" : "" ?>>
+                    <?= $dep["nombre"] ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+        <button type="submit">Buscar</button>
+    </form>
+
+    <?php if ($deptoBuscado != ""): ?>
+        <h3>Empleados encontrados</h3>
+
+        <?php if (count($empleados) == 0): ?>
+            <p>No hay empleados en este departamento.</p>
+        <?php else: ?>
+            <table border="1" cellpadding="8">
+                <tr>
+                    <th>ID</th>
+                    <th>Nombre</th>
+                    <th>Cargo</th>
+                    <th>Departamento</th>
+                </tr>
+                <?php foreach ($empleados as $emp): ?>
+                    <tr>
+                        <td><?= $emp["id"] ?></td>
+                        <td><?= $emp["nombre"] ?></td>
+                        <td><?= $emp["cargo"] ?></td>
+                        <td><?= $emp["departamento"] ?></td>
+                    </tr>
+                <?php endforeach; ?>
+            </table>
+        <?php endif; ?>
+    <?php endif; ?>
+
+</body>
+</html>
+
+
