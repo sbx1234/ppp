@@ -1,0 +1,228 @@
+// BD
+CREATE DATABASE bdproductos;
+USE bdproductos;
+
+CREATE TABLE categorias (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(50) NOT NULL UNIQUE
+);
+
+INSERT INTO categorias (nombre) VALUES
+('limpieza'),
+('electronica'),
+('deportes');
+
+CREATE TABLE productos (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100) NOT NULL,
+  precio DECIMAL(10,2) NOT NULL,
+  id_categoria INT NOT NULL,
+  FOREIGN KEY (id_categoria) REFERENCES categorias(id)
+);
+
+
+
+
+//conexion.php
+<?php
+class Conexion {
+    private $servername = "localhost";
+    private $username   = "root";
+    private $password   = "";
+    private $database   = "bdproductos";
+    public  $conn;
+
+    public function __construct() {
+        $this->conn = new mysqli(
+            $this->servername,
+            $this->username,
+            $this->password,
+            $this->database
+        );
+
+        if ($this->conn->connect_error) {
+            die(json_encode(["error" => "No se conectó a la base: " . $this->conn->connect_error]));
+        }
+    }
+}
+?>
+
+
+
+
+//Producto.php
+<?php
+require_once "conexion.php";
+
+class Producto {
+
+    private $conn;
+    private $categoriasValidas = ["limpieza", "electronica", "deportes"];
+
+    public function __construct() {
+        $db = new Conexion();
+        $this->conn = $db->conn;
+    }
+
+    // PUNTO 1: guardar producto
+    public function guardar($nombre, $precio, $categoria) {
+
+        if (!in_array(strtolower($categoria), $this->categoriasValidas)) {
+            return ["error" => "Categoría no válida. Solo: limpieza, electronica, deportes"];
+        }
+
+        $stmt = $this->conn->prepare("SELECT id FROM categorias WHERE nombre = ?");
+        $stmt->bind_param("s", $categoria);
+        $stmt->execute();
+        $res = $stmt->get_result();
+
+        if ($res->num_rows == 0) {
+            return ["error" => "La categoría no existe en la base"];
+        }
+
+        $idCategoria = $res->fetch_assoc()["id"];
+
+        $stmt = $this->conn->prepare(
+            "INSERT INTO productos (nombre, precio, id_categoria) VALUES (?, ?, ?)"
+        );
+        $stmt->bind_param("sdi", $nombre, $precio, $idCategoria);
+
+        if ($stmt->execute()) {
+            return ["success" => "Se guardó el producto"];
+        } else {
+            return ["error" => "No se guardó: " . $this->conn->error];
+        }
+    }
+
+    // PUNTO 2: buscar productos por categoría
+    public function buscarPorCategoria($categoria) {
+
+        if (!in_array(strtolower($categoria), $this->categoriasValidas)) {
+            return ["error" => "Categoría no válida"];
+        }
+
+        $stmt = $this->conn->prepare(
+            "SELECT p.id, p.nombre, p.precio, c.nombre AS categoria
+             FROM productos p
+             INNER JOIN categorias c ON p.id_categoria = c.id
+             WHERE c.nombre = ?"
+        );
+        $stmt->bind_param("s", $categoria);
+        $stmt->execute();
+        $res = $stmt->get_result();
+
+        $resultado = [];
+        while ($fila = $res->fetch_assoc()) {
+            $resultado[] = $fila;
+        }
+
+        return $resultado;
+    }
+}
+?>
+
+
+//index.php
+<?php
+require_once "Producto.php";
+
+$mensaje   = "";
+$productos = [];
+$categoriaBuscada = "";
+
+// PUNTO 1: guardar
+if (isset($_POST["accion"]) && $_POST["accion"] == "guardar") {
+    $p = new Producto();
+    $res = $p->guardar($_POST["nombre"], $_POST["precio"], $_POST["categoria"]);
+
+    if (isset($res["success"])) {
+        $mensaje = "Se guardó: " . $res["success"];
+    } else {
+        $mensaje = "Error: " . $res["error"];
+    }
+}
+
+// PUNTO 2: buscar
+if (isset($_GET["categoria"]) && $_GET["categoria"] != "") {
+    $categoriaBuscada = $_GET["categoria"];
+    $p = new Producto();
+    $productos = $p->buscarPorCategoria($categoriaBuscada);
+}
+?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Gestión de Productos</title>
+</head>
+<body>
+
+    <h2>1. Ingresar Producto</h2>
+
+    <form method="POST">
+        <input type="hidden" name="accion" value="guardar">
+        <input type="text"   name="nombre" placeholder="Nombre" required><br><br>
+        <input type="number" name="precio" placeholder="Precio" step="0.01" required><br><br>
+
+        <select name="categoria" required>
+            <option value="">-- Categoría --</option>
+            <option value="limpieza">Limpieza</option>
+            <option value="electronica">Electrónica</option>
+            <option value="deportes">Deportes</option>
+        </select><br><br>
+
+        <button type="submit">Guardar</button>
+    </form>
+
+    <?php if ($mensaje != "") echo "<p><b>$mensaje</b></p>"; ?>
+
+    <hr>
+
+    <h2>2. Buscar Productos por Categoría</h2>
+
+    <form method="GET">
+        <select name="categoria" required>
+            <option value="">-- Categoría --</option>
+            <option value="limpieza"    <?= $categoriaBuscada=="limpieza"?"selected":"" ?>>Limpieza</option>
+            <option value="electronica" <?= $categoriaBuscada=="electronica"?"selected":"" ?>>Electrónica</option>
+            <option value="deportes"    <?= $categoriaBuscada=="deportes"?"selected":"" ?>>Deportes</option>
+        </select>
+        <button type="submit">Buscar</button>
+    </form>
+
+    <?php if ($categoriaBuscada != ""): ?>
+        <h3>Productos en "<?= $categoriaBuscada ?>"</h3>
+
+        <?php if (isset($productos["error"])): ?>
+            <p>Error: <?= $productos["error"] ?></p>
+
+        <?php elseif (count($productos) == 0): ?>
+            <p>No hay productos en esta categoría.</p>
+
+        <?php else: ?>
+            <table border="1" cellpadding="8">
+                <tr>
+                    <th>ID</th>
+                    <th>Nombre</th>
+                    <th>Precio</th>
+                    <th>Categoría</th>
+                </tr>
+                <?php foreach ($productos as $p): ?>
+                    <tr>
+                        <td><?= $p["id"] ?></td>
+                        <td><?= $p["nombre"] ?></td>
+                        <td><?= $p["precio"] ?></td>
+                        <td><?= $p["categoria"] ?></td>
+                    </tr>
+                <?php endforeach; ?>
+            </table>
+        <?php endif; ?>
+    <?php endif; ?>
+
+</body>
+</html>
+
+
+
+
+
